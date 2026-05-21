@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Name Card Scanner</title>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #f8f7f4; --surface: #ffffff; --border: rgba(0,0,0,0.09); --border-strong: rgba(0,0,0,0.18);
+    --text: #1a1a1a; --text-muted: #6b6b6b; --text-faint: #aaa;
+    --green: #1D9E75; --amber: #BA7517; --blue: #185FA5;
+    --r: 10px; --rsm: 6px;
+  }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+  header { background: var(--surface); border-bottom: 0.5px solid var(--border); padding: 14px 24px; display: flex; align-items: center; gap: 12px; }
+  header h1 { font-size: 16px; font-weight: 600; }
+  header p { font-size: 13px; color: var(--text-muted); margin-left: auto; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border-strong); flex-shrink:0; }
+  .dot.green { background: var(--green); animation: pulse 1.4s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+  main { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 20px 24px; max-width: 1100px; margin: 0 auto; }
+  .panel { background: var(--surface); border: 0.5px solid var(--border); border-radius: var(--r); overflow: hidden; }
+  .ph { padding: 12px 16px; border-bottom: 0.5px solid var(--border); display: flex; align-items: center; gap: 8px; }
+  .ph h2 { font-size: 13px; font-weight: 600; flex: 1; }
+  .badge { font-size: 11px; font-weight: 500; padding: 2px 9px; border-radius: 99px; }
+  .bg { background: #E1F5EE; color: #0F6E56; }
+  .bb { background: #E6F1FB; color: #185FA5; }
+  .bgr { background: #F1EFE8; color: #5F5E5A; }
+  .cam-box { position: relative; background: #111; aspect-ratio: 16/10; }
+  video { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .overlay { position: absolute; inset: 0; pointer-events: none; }
+  .guide { position: absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:78%; height:65%; border:1.5px solid rgba(255,255,255,0.3); border-radius:8px; transition: border-color 0.25s, box-shadow 0.25s; }
+  .guide.locked { border-color: #1D9E75; box-shadow: 0 0 0 1px #1D9E75; }
+  .corner { position:absolute; width:14px; height:14px; }
+  .tl{top:-1px;left:-1px;border-top:2.5px solid white;border-left:2.5px solid white;border-radius:4px 0 0 0;}
+  .tr{top:-1px;right:-1px;border-top:2.5px solid white;border-right:2.5px solid white;border-radius:0 4px 0 0;}
+  .bl{bottom:-1px;left:-1px;border-bottom:2.5px solid white;border-left:2.5px solid white;border-radius:0 0 0 4px;}
+  .br{bottom:-1px;right:-1px;border-bottom:2.5px solid white;border-right:2.5px solid white;border-radius:0 0 4px 0;}
+  .flash { position:absolute; inset:0; background:white; opacity:0; pointer-events:none; }
+  .flash.go { animation: fa 0.18s ease-out forwards; }
+  @keyframes fa { 0%{opacity:0.9} 100%{opacity:0} }
+  .sbar { position:absolute; bottom:0; left:0; right:0; background:rgba(0,0,0,0.55); padding:7px 12px; display:flex; align-items:center; gap:8px; }
+  .sdot { width:6px; height:6px; border-radius:50%; background:#888; flex-shrink:0; }
+  .sdot.a { background:var(--green); animation:pulse 1.2s infinite; }
+  .sdot.l { background:#EF9F27; }
+  .stext { font-size:11px; color:white; }
+  .mwrap { margin-left:auto; display:flex; align-items:center; gap:5px; }
+  .mlbl { font-size:10px; color:rgba(255,255,255,0.5); }
+  .mbar { width:52px; height:3px; background:rgba(255,255,255,0.2); border-radius:2px; overflow:hidden; }
+  .mfill { height:100%; width:0; border-radius:2px; transition:width 0.1s,background 0.2s; }
+  .no-cam { aspect-ratio:16/10; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; background:#f4f3f0; }
+  .no-cam svg { opacity:0.2; }
+  .no-cam p { font-size:13px; color:var(--text-muted); }
+  .ctrl { padding:10px 14px; display:flex; gap:8px; align-items:center; border-top:0.5px solid var(--border); }
+  .btn { font-size:13px; padding:6px 14px; border-radius:var(--rsm); cursor:pointer; border:0.5px solid var(--border-strong); background:transparent; color:var(--text); font-family:inherit; transition:background 0.15s; }
+  .btn:hover { background:var(--bg); }
+  .btn.p { background:var(--text); color:white; border-color:transparent; }
+  .btn.p:hover { opacity:0.85; }
+  .btn.sm { font-size:12px; padding:5px 11px; }
+  .ocr-row { padding:8px 14px; border-top:0.5px solid var(--border); display:flex; align-items:center; gap:8px; min-height:34px; display:none; }
+  .obar-w { flex:1; height:3px; background:var(--border); border-radius:2px; overflow:hidden; }
+  .obar { height:100%; width:0; background:var(--green); border-radius:2px; transition:width 0.2s; }
+  .olbl { font-size:11px; color:var(--text-muted); white-space:nowrap; }
+  .stats { display:grid; grid-template-columns:1fr 1fr 1fr; border-top:0.5px solid var(--border); }
+  .stat { padding:10px 0; text-align:center; }
+  .stat+.stat { border-left:0.5px solid var(--border); }
+  .sn { font-size:22px; font-weight:600; line-height:1; }
+  .sl { font-size:11px; color:var(--text-muted); margin-top:2px; }
+  .supa-row { padding:8px 14px; border-bottom:0.5px solid var(--border); display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+  .supa-row label { font-size:11px; color:var(--text-muted); white-space:nowrap; }
+  .supa-row input { flex:1; min-width:110px; font-size:11px; padding:4px 8px; border-radius:var(--rsm); border:0.5px solid var(--border-strong); background:var(--bg); color:var(--text); font-family:monospace; }
+  .sdotS { width:6px; height:6px; border-radius:50%; background:var(--border-strong); flex-shrink:0; }
+  .sdotS.ok { background:var(--green); }
+  .list { overflow-y:auto; max-height:440px; }
+  .empty { padding:48px 16px; text-align:center; color:var(--text-faint); }
+  .ei { font-size:36px; margin-bottom:8px; opacity:0.25; }
+  .empty p { font-size:13px; }
+  .card { padding:12px 16px; border-bottom:0.5px solid var(--border); animation:si 0.25s ease; }
+  .card:last-child { border-bottom:none; }
+  @keyframes si { from{opacity:0;transform:translateY(-5px)} to{opacity:1;transform:none} }
+  .prow { padding:12px 16px; border-bottom:0.5px solid var(--border); display:flex; align-items:center; gap:10px; }
+  .spinner { width:15px; height:15px; border:1.5px solid var(--border-strong); border-top-color:var(--text); border-radius:50%; animation:spin 0.65s linear infinite; flex-shrink:0; }
+  @keyframes spin { to{transform:rotate(360deg)} }
+  .pt { font-size:12px; color:var(--text-muted); }
+  .av { width:34px; height:34px; border-radius:50%; background:#E6F1FB; color:#185FA5; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:600; flex-shrink:0; }
+  .cn { font-size:14px; font-weight:600; }
+  .cs { font-size:12px; color:var(--text-muted); margin-top:1px; }
+  .fields { display:grid; grid-template-columns:1fr 1fr; gap:3px 10px; margin-top:8px; }
+  .field { font-size:11px; color:var(--text-muted); display:flex; align-items:center; gap:4px; overflow:hidden; }
+  .field span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .fi { font-size:11px; flex-shrink:0; opacity:0.55; }
+  .lfoot { padding:10px 14px; border-top:0.5px solid var(--border); display:flex; gap:8px; }
+  @media(max-width:700px){main{grid-template-columns:1fr;padding:12px;}header p{display:none;}}
+</style>
+</head>
+<body>
+<header>
+  <div class="dot" id="hd"></div>
+  <h1>Name card scanner</h1>
+  <p id="hs">Camera off</p>
+</header>
+<main>
+  <div class="panel">
+    <div class="ph">
+      <h2>Scanner</h2>
+      <span class="badge bgr" id="sbadge">Idle</span>
+      <span class="badge bb" id="qbadge" style="display:none">In queue: <span id="qn">0</span></span>
+    </div>
+    <div id="no-cam" class="no-cam">
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+      <p>Click "Start camera" to begin</p>
+    </div>
+    <div id="cw" style="display:none">
+      <div class="cam-box">
+        <video id="vid" autoplay playsinline muted></video>
+        <canvas id="mc" style="display:none"></canvas>
+        <div class="overlay">
+          <div class="guide" id="guide">
+            <div class="corner tl"></div><div class="corner tr"></div>
+            <div class="corner bl"></div><div class="corner br"></div>
+          </div>
+          <div class="flash" id="flash"></div>
+        </div>
+        <div class="sbar">
+          <div class="sdot" id="sdot"></div>
+          <span class="stext" id="stext">Waiting for card...</span>
+          <div class="mwrap"><span class="mlbl">motion</span><div class="mbar"><div class="mfill" id="mf"></div></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="ctrl">
+      <button class="btn p" id="startb" onclick="startCam()">Start camera</button>
+      <button class="btn" id="stopb" style="display:none" onclick="stopCam()">Stop</button>
+      <button class="btn sm" id="manb" style="display:none;margin-left:auto" onclick="manualCap()">Capture now</button>
+    </div>
+    <div class="ocr-row" id="ocr-row">
+      <span class="olbl" id="olbl">Loading OCR...</span>
+      <div class="obar-w"><div class="obar" id="obar"></div></div>
+      <span class="olbl" id="opct">0%</span>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="sn" id="sc">0</div><div class="sl">Captured</div></div>
+      <div class="stat"><div class="sn" id="sp">0</div><div class="sl">Processing</div></div>
+      <div class="stat"><div class="sn" id="sd">0</div><div class="sl">Done</div></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="ph">
+      <h2>Contacts</h2>
+      <span class="badge bgr" id="cb">0 cards</span>
+    </div>
+    <div class="supa-row">
+      <div class="sdotS" id="sdotS"></div>
+      <label>Supabase URL</label>
+      <input type="text" id="surl" placeholder="https://xxxx.supabase.co" />
+      <label>Anon key</label>
+      <input type="password" id="skey" placeholder="eyJ..." />
+      <button class="btn sm" onclick="connectSupa()">Connect</button>
+    </div>
+    <div class="list" id="list">
+      <div class="empty"><div class="ei">⬡</div><p>Scanned contacts appear here live</p></div>
+    </div>
+    <div class="lfoot">
+      <button class="btn sm" onclick="exportXL()">↓ Export Excel</button>
+      <button class="btn sm" onclick="clearAll()">Clear all</button>
+    </div>
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let stream=null, motionTimer=null, capTimer=null, prevFrame=null;
+let isLocked=false, totalCap=0, totalProc=0, totalDone=0;
+let contacts=[], worker=null, workerReady=false, audioCtx=null, supaOk=false;
+
+async function initWorker() {
+  if (workerReady) return;
+  $('ocr-row').style.display='flex';
+  $('olbl').textContent='Loading OCR engine...';
+  $('obar').style.width='10%';
+  try {
+    worker = await Tesseract.createWorker('eng', 1, {
+      logger: m => {
+        if (m.status === 'recognizing text') {
+          const p = Math.round(m.progress * 100);
+          $('obar').style.width = p + '%';
+          $('opct').textContent = p + '%';
+          $('olbl').textContent = 'Reading card...';
+        } else if (m.status) {
+          $('olbl').textContent = m.status.slice(0,30);
+        }
+      }
+    });
+    try { await worker.setParameters({ tessedit_pageseg_mode: '11' }); }
+    catch(pe) { console.warn('setParameters skipped:', pe.message); }
+    workerReady = true;
+    $('olbl').textContent = 'OCR ready';
+    $('obar').style.width = '100%';
+    $('opct').textContent = '';
+    setTimeout(() => { $('ocr-row').style.display = 'none'; }, 1000);
+  } catch(e) {
+    $('olbl').textContent = 'OCR failed: ' + e.message;
+    $('ocr-row').style.display='flex';
+    console.error('Tesseract init error:', e);
+  }
+}
+
+
+async function startCam() {
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment',width:{ideal:1280},height:{ideal:720}}});
+    $('vid').srcObject=stream;
+    $('no-cam').style.display='none'; $('cw').style.display='block';
+    $('startb').style.display='none'; $('stopb').style.display=''; $('manb').style.display='';
+    $('hd').className='dot green'; $('hs').textContent='Scanning';
+    $('sbadge').textContent='Scanning'; $('sbadge').className='badge bg';
+    $('sdot').className='sdot a';
+    audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+    $('vid').addEventListener('loadeddata', ()=>{
+      const mc=$('mc'); mc.width=$('vid').videoWidth||640; mc.height=$('vid').videoHeight||360;
+      startMotion();
+    });
+    if (!workerReady) initWorker();
+  } catch(e) { alert('Camera access denied. Allow camera permissions and reload.'); }
+}
+
+function stopCam() {
+  if (stream){stream.getTracks().forEach(t=>t.stop());stream=null;}
+  clearInterval(motionTimer); clearTimeout(capTimer);
+  $('no-cam').style.display='flex'; $('cw').style.display='none';
+  $('startb').style.display=''; $('stopb').style.display='none'; $('manb').style.display='none';
+  $('hd').className='dot'; $('hs').textContent='Camera off';
+  $('sbadge').textContent='Idle'; $('sbadge').className='badge bgr';
+  $('sdot').className='sdot'; isLocked=false; prevFrame=null;
+}
+
+function startMotion() {
+  const mc=$('mc'), ctx=mc.getContext('2d'), vid=$('vid');
+  let stillFrames=0; const STILL_NEEDED=5;
+  motionTimer = setInterval(()=>{
+    if (!stream) return;
+    ctx.drawImage(vid,0,0,mc.width,mc.height);
+    const frame=ctx.getImageData(0,0,mc.width,mc.height);
+    if (prevFrame) {
+      const m=calcM(prevFrame.data,frame.data);
+      const pct=Math.min(100,m*350);
+      $('mf').style.width=pct+'%';
+      $('mf').style.background=pct<18?'#1D9E75':pct<50?'#EF9F27':'#E24B4A';
+      if (pct<16) {
+        stillFrames=Math.min(stillFrames+1,STILL_NEEDED);
+        if (stillFrames>=STILL_NEEDED && !isLocked) {
+          const cardCheck=checkCardPresence(frame,mc.width,mc.height);
+          if (cardCheck.ok) {
+            isLocked=true;
+            $('guide').className='guide locked';
+            $('sdot').className='sdot l';
+            $('stext').textContent='Card detected - capturing...';
+            capTimer=setTimeout(doCap,600);
+          } else {
+            $('stext').textContent='No card detected: '+cardCheck.reason;
+            stillFrames=0;
+          }
+        } else if (!isLocked) {
+          $('stext').textContent=stillFrames<STILL_NEEDED?'Stabilising...':'Waiting for card...';
+        }
+      } else {
+        stillFrames=0;
+        if (isLocked){isLocked=false;clearTimeout(capTimer);$('guide').className='guide';$('sdot').className='sdot a';}
+        $('stext').textContent='Waiting for card...';
+      }
+    }
+    prevFrame=frame;
+  },150);
+}
+
+function checkCardPresence(frame,fw,fh){
+  const gx=Math.floor(fw*0.11), gy=Math.floor(fh*0.175);
+  const gw=Math.floor(fw*0.78), gh=Math.floor(fh*0.65);
+  const d=frame.data;
+  let minL=255,maxL=0,sumL=0,count=0;
+  const step=8;
+  for(let y=gy;y<gy+gh;y+=step){
+    for(let x=gx;x<gx+gw;x+=step){
+      const i=(y*fw+x)*4;
+      const l=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
+      if(l<minL)minL=l; if(l>maxL)maxL=l;
+      sumL+=l; count++;
+    }
+  }
+  const avgL=sumL/count;
+  const contrast=maxL-minL;
+  if(avgL<30) return {ok:false,reason:'too dark'};
+  if(avgL>235) return {ok:false,reason:'too bright/no card'};
+  if(contrast<55) return {ok:false,reason:'no card in frame'};
+  let edges=0, edgeStep=4;
+  for(let y=gy+edgeStep;y<gy+gh-edgeStep;y+=edgeStep){
+    for(let x=gx+edgeStep;x<gx+gw-edgeStep;x+=edgeStep){
+      const i=(y*fw+x)*4;
+      const il=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
+      const ir=0.299*d[i+4]+0.587*d[i+5]+0.114*d[i+6];
+      const id2=(y+edgeStep)*fw*4+x*4;
+      const ib=0.299*d[id2]+0.587*d[id2+1]+0.114*d[id2+2];
+      if(Math.abs(il-ir)>28||Math.abs(il-ib)>28) edges++;
+    }
+  }
+  const totalSamples=((gw/edgeStep)*(gh/edgeStep));
+  const edgeDensity=edges/totalSamples;
+  if(edgeDensity<0.04) return {ok:false,reason:'no text found'};
+  if(edgeDensity>0.7) return {ok:false,reason:'too much noise'};
+  return {ok:true};
+}
+
+function calcM(a,b){
+  let d=0; const step=16, samples=Math.floor(a.length/step);
+  for(let i=0;i<a.length;i+=step) d+=Math.abs(a[i]-b[i])+Math.abs(a[i+1]-b[i+1])+Math.abs(a[i+2]-b[i+2]);
+  return d/(samples*3*255);
+}
+
+function preprocessImage(srcCanvas,cx,cy,cw,ch){
+  const SCALE=2.5;
+  const out=document.createElement('canvas');
+  out.width=Math.floor(cw*SCALE); out.height=Math.floor(ch*SCALE);
+  const ctx=out.getContext('2d');
+  ctx.imageSmoothingEnabled=true; ctx.imageSmoothingQuality='high';
+  ctx.drawImage(srcCanvas,cx,cy,cw,ch,0,0,out.width,out.height);
+  const img=ctx.getImageData(0,0,out.width,out.height);
+  const d=img.data;
+  for(let i=0;i<d.length;i+=4){
+    const r=d[i],g=d[i+1],b=d[i+2];
+    let grey=0.299*r+0.587*g+0.114*b;
+    grey=Math.min(255,Math.max(0,(grey-128)*1.65+150));
+    d[i]=d[i+1]=d[i+2]=grey;
+  }
+  ctx.putImageData(img,0,0);
+  const s=document.createElement('canvas');
+  s.width=out.width; s.height=out.height;
+  const sc=s.getContext('2d');
+  sc.filter='contrast(1.2) brightness(1.08)';
+  sc.drawImage(out,0,0);
+  return s.toDataURL('image/png');
+}
+
+function doCap(){
+  const vid=$('vid');
+  const vw=vid.videoWidth||640, vh=vid.videoHeight||360;
+  const cx=Math.floor(vw*0.11), cy=Math.floor(vh*0.175);
+  const cw=Math.floor(vw*0.78), ch=Math.floor(vh*0.65);
+  const raw=document.createElement('canvas');
+  raw.width=vw; raw.height=vh;
+  raw.getContext('2d').drawImage(vid,0,0);
+  const processed=preprocessImage(raw,cx,cy,cw,ch);
+  doFlash(); beep();
+  totalCap++; $('sc').textContent=totalCap;
+  $('stext').textContent='Captured! Slide next card...';
+  $('sdot').className='sdot a'; isLocked=false; $('guide').className='guide';
+  setTimeout(()=>{ if(stream)$('stext').textContent='Waiting for card...'; },2000);
+  processCard(processed,totalCap);
+}
+
+function manualCap(){clearTimeout(capTimer);isLocked=false;doCap();}
+
+function doFlash(){const f=$('flash');f.className='flash go';setTimeout(()=>f.className='flash',200);}
+
+function beep(){
+  if(!audioCtx)return;
+  const o=audioCtx.createOscillator(),g=audioCtx.createGain();
+  o.connect(g);g.connect(audioCtx.destination);
+  o.frequency.value=1040;o.type='sine';
+  g.gain.setValueAtTime(0.12,audioCtx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001,audioCtx.currentTime+0.12);
+  o.start();o.stop(audioCtx.currentTime+0.12);
+}
+
+function addProcRow(id){
+  totalProc++; $('sp').textContent=totalProc;
+  $('qbadge').style.display=''; $('qn').textContent=totalProc;
+  const list=$('list'), empty=list.querySelector('.empty');
+  if(empty)empty.remove();
+  const div=document.createElement('div');
+  div.className='prow'; div.id='p'+id;
+  div.innerHTML=`<div class="spinner"></div><span class="pt">Reading card ${id}...</span>`;
+  list.prepend(div);
+}
+
+async function processCard(dataUrl,id){
+  addProcRow(id);
+  let c={name:'',title:'',company:'',email:'',phone:'',website:'',address:'',linkedin:''};
+  try {
+    if(!workerReady) await initWorker();
+    if(!workerReady){ c.name='OCR engine not ready - reload page'; throw new Error('not ready'); }
+    $('ocr-row').style.display='flex'; $('obar').style.width='0%';
+    const res = await worker.recognize(dataUrl);
+    const rawText = res && res.data ? res.data.text : '';
+    if(!rawText || rawText.trim().length < 2){
+      c.name='Could not read text - check lighting/focus';
+    } else {
+      const cleaned = cleanOcrText(rawText);
+      c = parseCard(cleaned);
+      if(!c.name && !c.email && !c.phone) c.name = 'Parsed (check fields): ' + rawText.split('\n')[0].slice(0,40);
+    }
+    $('ocr-row').style.display='none';
+  } catch(e){ if(!c.name) c.name='Error: '+e.message.slice(0,50); console.error('processCard error:',e); }
+  totalProc=Math.max(0,totalProc-1); totalDone++;
+  $('sp').textContent=totalProc; $('sd').textContent=totalDone;
+  $('qn').textContent=totalProc;
+  if(totalProc===0)$('qbadge').style.display='none';
+  contacts.push(c);
+  $('cb').textContent=contacts.length+(contacts.length===1?' card':' cards');
+  replaceRow(id,c);
+  if(supaOk) saveSupa(c);
+}
+
+function cleanOcrText(text){
+  return text
+    .replace(/[|\[\]{}]/g,' ')
+    .replace(/([a-z])l([A-Z])/g,'$1i$2')
+    .replace(/0(?=[a-zA-Z])|(?<=[a-zA-Z])0/g,'o')
+    .replace(/[ \t]{2,}/g,' ')
+    .replace(/\n{3,}/g,'\n\n')
+    .trim();
+}
+
+function parseCard(text){
+  const lines=text.split('\n').map(l=>l.trim()).filter(l=>l.length>1);
+  const eRx=/[\w.+-]+@[\w-]+\.[a-z]{2,}/i;
+  const pRx=/(\+?[\d\s\-().]{7,20})/;
+  const wRx=/(?:www\.[\w.-]+\.[a-z]{2,}|[\w-]+\.(?:com|sg|my|io|co|net|org|gov|edu)(?:\/[\w-]*)?)/i;
+  const lRx=/linkedin\.com\/in\/[\w-]+/i;
+  const tKw=/\b(director|manager|officer|executive|president|head|chief|ceo|cfo|cto|coo|vp|vice|senior|associate|consultant|analyst|engineer|developer|designer|lead|partner|founder|md|gm|sales|marketing|hr|finance|legal|admin|coordinator|specialist|advisor|doctor|dr|prof)\b/i;
+  const cKw=/\b(pte|ltd|llp|inc|corp|co\.|sdn|bhd|group|holdings|technology|technologies|solutions|services|consulting|medical|health|hospital|clinic|bank|financial|insurance|logistics|trading|enterprise|international|global|asia|singapore|malaysia)\b/i;
+  let email='',phone='',website='',linkedin='',name='',title='',company='';
+  let other=[];
+  for(const line of lines){
+    if(eRx.test(line)){email=line.match(eRx)[0];continue;}
+    if(lRx.test(line)){linkedin=line.match(lRx)[0];continue;}
+    if(wRx.test(line)&&!email){website=line.match(wRx)[0];continue;}
+    const pm=line.match(pRx);
+    if(pm&&/\d{6,}/.test(pm[1].replace(/\D/g,''))){if(!phone)phone=pm[1].trim();continue;}
+    other.push(line);
+  }
+  for(const line of other){
+    if(!name&&line.length>2&&line.length<50&&/^[A-Za-z\s'.,-]+$/.test(line)&&!tKw.test(line)&&!cKw.test(line)){name=line;continue;}
+    if(!title&&tKw.test(line)&&line.length<60){title=line;continue;}
+    if(!company&&cKw.test(line)&&line.length<60){company=line;continue;}
+  }
+  if(!name&&other.length>0)name=other[0];
+  if(!company&&other.length>1)company=other[other.length-1];
+  const addrLines=other.filter(l=>l!==name&&l!==title&&l!==company&&l.length>5);
+  return {name,title,company,email,phone,website,address:addrLines.slice(-2).join(', '),linkedin};
+}
+
+function replaceRow(id,c){
+  const proc=$('p'+id); if(!proc)return;
+  const n=c.name||'Unknown';
+  const ini=n.split(/\s+/).map(w=>w[0]||'').join('').toUpperCase().slice(0,2)||'?';
+  const div=document.createElement('div');
+  div.className='card';
+  div.innerHTML=`
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+      <div class="av">${e(ini)}</div>
+      <div style="flex:1;min-width:0">
+        <div class="cn">${e(c.name||'Unknown')}</div>
+        <div class="cs">${e([c.title,c.company].filter(Boolean).join(' · '))}</div>
+      </div>
+    </div>
+    <div class="fields">
+      ${c.email?`<div class="field"><span class="fi">✉</span><span>${e(c.email)}</span></div>`:''}
+      ${c.phone?`<div class="field"><span class="fi">✆</span><span>${e(c.phone)}</span></div>`:''}
+      ${c.website?`<div class="field"><span class="fi">⊕</span><span>${e(c.website)}</span></div>`:''}
+      ${c.linkedin?`<div class="field"><span class="fi">in</span><span>${e(c.linkedin)}</span></div>`:''}
+      ${c.address?`<div class="field" style="grid-column:span 2"><span class="fi">⌖</span><span>${e(c.address)}</span></div>`:''}
+    </div>`;
+  proc.replaceWith(div);
+}
+
+function e(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+function exportXL(){
+  if(!contacts.length){alert('No contacts yet.');return;}
+  const rows=contacts.map(c=>({Name:c.name||'',Title:c.title||'',Company:c.company||'',Email:c.email||'',Phone:c.phone||'',Website:c.website||'',Address:c.address||'',LinkedIn:c.linkedin||''}));
+  const ws=XLSX.utils.json_to_sheet(rows), wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,'Contacts');
+  XLSX.writeFile(wb,'name_cards_'+new Date().toISOString().slice(0,10)+'.xlsx');
+}
+
+function clearAll(){
+  if(!contacts.length)return;
+  if(!confirm(`Clear all ${contacts.length} contacts?`))return;
+  contacts=[];totalCap=0;totalProc=0;totalDone=0;
+  $('sc').textContent=0;$('sp').textContent=0;$('sd').textContent=0;
+  $('cb').textContent='0 cards';$('qbadge').style.display='none';
+  $('list').innerHTML='<div class="empty"><div class="ei">⬡</div><p>Scanned contacts appear here live</p></div>';
+}
+
+async function connectSupa(){
+  const url=$('surl').value.trim(), key=$('skey').value.trim();
+  if(!url||!key){alert('Enter both fields.');return;}
+  try{
+    const r=await fetch(`${url}/rest/v1/contacts?select=id&limit=1`,{headers:{'apikey':key,'Authorization':'Bearer '+key}});
+    if(r.ok||r.status===406){supaOk=true;$('sdotS').className='sdotS ok';alert('Connected! Contacts will sync to Supabase.');}
+    else alert('Failed: '+r.status+'. Check your URL and key.');
+  }catch(e){alert('Error: '+e.message);}
+}
+
+async function saveSupa(c){
+  const url=$('surl').value.trim(),key=$('skey').value.trim();
+  if(!url||!key)return;
+  try{
+    await fetch(`${url}/rest/v1/contacts`,{method:'POST',headers:{'apikey':key,'Authorization':'Bearer '+key,'Content-Type':'application/json','Prefer':'return=minimal'},body:JSON.stringify(c)});
+  }catch(e){console.warn('Supabase save failed:',e);}
+}
+</script>
+</body>
+</html>
